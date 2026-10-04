@@ -84,6 +84,8 @@ struct DeviceState {
 };
 
 DeviceState state;
+DeviceState lastPushedState;    // track what we last sent to the cloud
+bool firstPush = true;          // always push on first boot
 unsigned long lastTelemetry  = 0;
 unsigned long lastCommandPoll = 0;
 unsigned long lastHeartbeat  = 0;
@@ -126,21 +128,35 @@ void loop() {
   unsigned long now = millis();
   if (now - lastSTM32Debug >= 5000) {
     lastSTM32Debug = now;
-    Serial.printf("[STM32] Status: %s, Last data: %lums ago, Available: %d bytes\n",
-      state.stm32_online ? "ONLINE" : "OFFLINE",
+    bool stm32Online = (now - lastSTM32Data < STM32_TIMEOUT_MS);
+    Serial.printf("[STM32] Status: %s, Last data: %lums ago, Available: %d bytes, Pending: '%s'\n",
+      stm32Online ? "ONLINE" : "OFFLINE",
       now - lastSTM32Data,
-      STM32_SERIAL.available());
+      STM32_SERIAL.available(),
+      pendingSTM32Line.c_str());
   }
 
-  // Check STM32 online status
+  // Update STM32 online status
   state.stm32_online = (millis() - lastSTM32Data < STM32_TIMEOUT_MS);
 
-  unsigned long now = millis();
+  // Push telemetry only when something changed OR forced interval expired (30s)
+  bool stateChanged = firstPush ||
+    state.water_level  != lastPushedState.water_level  ||
+    (int)state.voltage != (int)lastPushedState.voltage ||
+    state.voltage_state!= lastPushedState.voltage_state||
+    state.pump_state   != lastPushedState.pump_state   ||
+    state.mode         != lastPushedState.mode         ||
+    state.dry_run      != lastPushedState.dry_run      ||
+    state.fault        != lastPushedState.fault        ||
+    state.stm32_online != lastPushedState.stm32_online;
 
-  // Push telemetry to Supabase
-  if (now - lastTelemetry >= TELEMETRY_INTERVAL_MS) {
+  bool forcePush = (now - lastTelemetry >= 30000);  // force push every 30s regardless
+
+  if ((stateChanged || forcePush) && (now - lastTelemetry >= TELEMETRY_INTERVAL_MS)) {
     pushTelemetry();
+    lastPushedState = state;
     lastTelemetry = now;
+    firstPush = false;
   }
 
   // Poll for commands from web app
@@ -180,11 +196,12 @@ void connectWiFi() {
 
 // ─────────────────────────────────────────────────────────────
 //  Read JSON lines from STM32 over UART
-//  STM32 sends: {"wl":72,"v":230,"vs":"SAFE","ps":"OFF","mode":"AUTO","dry":false,"fault":""}
+//  STM32 sends: {"wl":72,"v":230,"vs":"NORMAL","ps":"OFF","mode":"AUTO","dry":false,"fault":""}
 // ─────────────────────────────────────────────────────────────
 void readSTM32() {
   while (STM32_SERIAL.available()) {
     char c = STM32_SERIAL.read();
+    Serial.print(c);  // Echo raw byte to USB serial so we can see what's arriving
     if (c == '\n') {
       parseSTM32Line(pendingSTM32Line);
       pendingSTM32Line = "";
