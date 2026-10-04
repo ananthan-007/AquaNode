@@ -13,6 +13,8 @@
  */
 
 import type { DeviceTransport } from "@/lib/device/transport";
+import { createClient } from "@/lib/supabase/client";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import type {
   ConnectionPhase,
   HardwareInboundMessage,
@@ -47,6 +49,7 @@ export class CloudTransport implements DeviceTransport {
   private messageHandlers = new Set<MessageHandler>();
   private connectionHandlers = new Set<ConnectionHandler>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private channel: RealtimeChannel | null = null;
 
   constructor(config?: Partial<CloudTransportConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -138,6 +141,7 @@ export class CloudTransport implements DeviceTransport {
         });
       }
 
+      this.startRealtimeSubscription();
       this.startPolling();
     } catch (err) {
       this.setPhase("ERROR");
@@ -181,6 +185,10 @@ export class CloudTransport implements DeviceTransport {
 
   async disconnect(): Promise<void> {
     this.stopPolling();
+    if (this.channel) {
+      void this.channel.unsubscribe();
+      this.channel = null;
+    }
     this.deviceId = null;
     this.setPhase("DISCONNECTED");
   }
@@ -228,11 +236,49 @@ export class CloudTransport implements DeviceTransport {
     }
   }
 
+  private startRealtimeSubscription(): void {
+    if (!this.deviceId) return;
+    const supabase = createClient();
+    
+    this.channel = supabase
+      .channel(`device-${this.deviceId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "device_registry",
+          filter: `device_id=eq.${this.deviceId}`,
+        },
+        (payload) => {
+          // Whenever a Postgres change happens, instantly fetch the full mapped state 
+          // to push through the rest of the app immediately.
+          void this.pollDeviceState();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "device_state",
+          filter: `device_id=eq.${this.deviceId}`,
+        },
+        (payload) => {
+          void this.pollDeviceState();
+        }
+      )
+      .subscribe();
+  }
+
   private async pollDeviceState(): Promise<void> {
     if (!this.deviceId || this._phase === "DISCONNECTED") return;
 
     try {
-      const res = await fetch(`/api/device/${encodeURIComponent(this.deviceId)}`);
+      // Add cache: 'no-store' to ensure we never get a stale cached browser fetch
+      const res = await fetch(`/api/device/${encodeURIComponent(this.deviceId)}?t=${Date.now()}`, {
+        cache: "no-store",
+      });
       if (!res.ok) return;
 
       const data = await res.json();
