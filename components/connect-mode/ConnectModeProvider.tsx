@@ -32,8 +32,13 @@ export function ConnectModeProvider({
   }, []);
 
   useEffect(() => {
+    const handleOpen = () => setIsOpen(true);
+    window.addEventListener("open-connect-mode", handleOpen);
     const activation = installConnectModeActivation(handleActivate);
-    return () => activation.destroy();
+    return () => {
+      activation.destroy();
+      window.removeEventListener("open-connect-mode", handleOpen);
+    };
   }, [handleActivate]);
 
   return (

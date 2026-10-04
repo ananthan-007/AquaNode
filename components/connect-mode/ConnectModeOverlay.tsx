@@ -448,14 +448,6 @@ export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
                 phase={status.phase}
               />
             </div>
-            
-            <div className="bg-slate-900 p-2 mt-4 rounded text-[10px] text-emerald-400 font-mono overflow-auto max-h-32">
-              Debug Status: {JSON.stringify({
-                stm32Connected: status.stm32.connected,
-                telemetryCount: status.telemetry.messageCount,
-                deviceStm32: selectedDevice?.stm32Connected
-              }, null, 2)}
-            </div>
 
             {/* Error Banner */}
             {error && (
