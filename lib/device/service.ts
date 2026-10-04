@@ -87,6 +87,13 @@ export function isHardwareConnected(): boolean {
 
 // ─── Runtime provider management (for Connect Mode) ─────────────────────
 
+const providerListeners = new Set<() => void>();
+
+export function onProviderChange(listener: () => void): () => void {
+  providerListeners.add(listener);
+  return () => providerListeners.delete(listener);
+}
+
 /** Get the currently active provider instance (null if not connected). */
 export function getActiveProvider(): DeviceProvider | null {
   return activeProvider;
@@ -106,6 +113,7 @@ export function setActiveProvider(provider: DeviceProvider): void {
     activeProvider.dispose?.();
   }
   activeProvider = provider;
+  providerListeners.forEach((l) => l());
 }
 
 /**
@@ -115,5 +123,6 @@ export function clearActiveProvider(): void {
   if (activeProvider) {
     activeProvider.dispose?.();
     activeProvider = null;
+    providerListeners.forEach((l) => l());
   }
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Command, CommandStatus, DeviceState } from "@/types/device";
-import { getDeviceState, createCommand, getCommand, subscribeToDeviceState, isProviderActive } from "@/lib/device/service";
+import { getDeviceState, createCommand, getCommand, subscribeToDeviceState, isProviderActive, onProviderChange } from "@/lib/device/service";
 import { getDisplayConnection } from "@/lib/device/staleness";
 import { TankLevel } from "./TankLevel";
 import { FaultBanner } from "./FaultBanner";
@@ -64,7 +64,14 @@ export function DashboardClient({ deviceId }: { deviceId: string }) {
     });
 
     return unsubscribe;
-  }, [deviceId, refresh]);
+  }, [deviceId, refresh, providerActive]);
+
+  useEffect(() => {
+    // Listen for provider changes (e.g. from ConnectModeOverlay)
+    return onProviderChange(() => {
+      setProviderActive(isProviderActive());
+    });
+  }, []);
 
   // Poll the active command until it reaches a terminal state — same logic
   // applies for both simulator and supabase paths so CommandControls never
