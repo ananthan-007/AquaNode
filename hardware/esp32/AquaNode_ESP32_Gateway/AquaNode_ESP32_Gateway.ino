@@ -68,7 +68,7 @@ const unsigned long TELEMETRY_INTERVAL_MS  = 2000;   // push to Supabase every 2
 const unsigned long COMMAND_POLL_MS        = 3000;   // poll commands every 3s
 const unsigned long HEARTBEAT_INTERVAL_MS  = 8000;   // heartbeat every 8s (matches web app ONLINE threshold of 25s)
 const unsigned long WIFI_RETRY_MS          = 5000;
-const unsigned long STM32_TIMEOUT_MS       = 5000;   // STM32 considered offline after 5s
+const unsigned long STM32_TIMEOUT_MS       = 10000;  // STM32 considered offline after 10s (give it time to boot+send first packet)
 
 // ─── State ────────────────────────────────────────────────────
 struct DeviceState {
@@ -87,7 +87,8 @@ DeviceState state;
 unsigned long lastTelemetry  = 0;
 unsigned long lastCommandPoll = 0;
 unsigned long lastHeartbeat  = 0;
-unsigned long lastSTM32Data  = 0;
+unsigned long lastSTM32Data  = 0;  // Will be set in setup() after millis() is valid
+unsigned long lastSTM32Debug = 0;  // For periodic UART debug print
 String        pendingSTM32Line = "";
 
 // ─────────────────────────────────────────────────────────────
@@ -95,6 +96,10 @@ void setup() {
   Serial.begin(115200);
   STM32_SERIAL.begin(9600, SERIAL_8N1, STM32_RX_PIN, STM32_TX_PIN);
   delay(500);
+
+  // Initialize lastSTM32Data to now so first 10 s don't falsely report STM32 offline
+  // (millis() is valid after setup starts)
+  lastSTM32Data = millis();
 
   Serial.println(F("=== AquaNode ESP32 Gateway ==="));
   Serial.print(F("Device ID: ")); Serial.println(DEVICE_ID);
@@ -116,6 +121,16 @@ void loop() {
 
   // Read any data from STM32
   readSTM32();
+
+  // Periodic debug: show whether UART is getting bytes
+  unsigned long now = millis();
+  if (now - lastSTM32Debug >= 5000) {
+    lastSTM32Debug = now;
+    Serial.printf("[STM32] Status: %s, Last data: %lums ago, Available: %d bytes\n",
+      state.stm32_online ? "ONLINE" : "OFFLINE",
+      now - lastSTM32Data,
+      STM32_SERIAL.available());
+  }
 
   // Check STM32 online status
   state.stm32_online = (millis() - lastSTM32Data < STM32_TIMEOUT_MS);
