@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Next.js build output
+.next/
+
+# Vercel
+.vercel
+
+# Environment variables — never commit secrets
+.env
+.env*.local
+.env.production
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDE / editor
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Kiro AI assistant workspace files
+.kiro/
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db

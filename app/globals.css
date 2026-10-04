@@ -1,0 +1,38 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  height: 100%;
+}
+
+:focus-visible {
+  outline: 2px solid #0284c7;
+  outline-offset: 2px;
+}
+
+@keyframes ag-surface {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-40px); }
+}
+
+@keyframes ag-pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+
+.ag-water-surface {
+  background: radial-gradient(circle at 30% 50%, rgba(255,255,255,0.55), transparent 55%);
+}
+
+.ag-water-live .ag-water-surface {
+  animation: ag-surface 4s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
