@@ -139,6 +139,12 @@ export async function POST(req: NextRequest) {
   const nonce = randomBytes(16).toString("hex"); // 32-char hex, unguessable
   const expiresAt = new Date(now + CHALLENGE_TTL_MS).toISOString();
 
+  // In development, auto-verify the challenge immediately.
+  // The current ESP32 firmware uses Supabase REST directly and does not
+  // implement the challenge-response protocol. Production requires a live
+  // round-trip; dev mode skips Phase 2 so testing is unblocked.
+  const isDevMode = process.env.NODE_ENV !== "production";
+
   // Best-effort insert — if device_challenges table doesn't exist yet
   // (migration 0005 not applied), fall through to legacy DB-only verification.
   let challengeId: string | null = null;
@@ -150,6 +156,8 @@ export async function POST(req: NextRequest) {
       device_id: deviceId,
       nonce,
       expires_at: expiresAt,
+      // Auto-verify in dev so firmware without challenge-response still connects
+      ...(isDevMode ? { response_ok: true, responded_at: new Date().toISOString() } : {}),
     })
     .select("id")
     .single();
