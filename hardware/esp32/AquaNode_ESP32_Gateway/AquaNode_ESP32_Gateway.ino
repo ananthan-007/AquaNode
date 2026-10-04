@@ -46,6 +46,10 @@
 // Supabase anon key (from Project Settings → API)
 #define SUPABASE_KEY     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ5emVrdHRwZmtmdHBma2hkcHdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc3MzQ3NDUsImV4cCI6MjEwMzMxMDc0NX0.F99-zC6-0vM6FndztVnvBFluaVsvoPZ78ZXHnjGLbA8"
 
+// Backend API URL (for ingest)
+#define BACKEND_URL      "https://aqua-node-beta.vercel.app"
+#define INGEST_TOKEN     "dev-device-token-secret"
+
 // Device ID — must match device_registry.device_id (text, not UUID)
 // This is the string ID your web app registered the device with
 #define DEVICE_ID        "AQ-ESP32-DEV000000001"
@@ -218,41 +222,38 @@ void parseSTM32Line(String line) {
 // ─────────────────────────────────────────────────────────────
 void pushTelemetry() {
   if (WiFi.status() != WL_CONNECTED) return;
-
-  // Upsert into device_registry (text device_id, no UUID FK required)
-  // device_state (UUID FK) is only writable once a user has claimed the device
+  String url = String(BACKEND_URL) + "/api/device/ingest";
+  
   StaticJsonDocument<512> doc;
-  doc["device_id"]        = DEVICE_ID;
-  doc["water_level"]      = state.water_level;
-  doc["voltage"]          = (int)state.voltage;
-  doc["voltage_state"]    = state.voltage_state;
-  doc["pump_state"]       = state.pump_state;
-  doc["mode"]             = state.mode;
-  doc["dry_run"]          = state.dry_run;
-  doc["fault"]            = state.fault;
-  doc["firmware_version"] = FIRMWARE_VERSION;
-  doc["stm32_connected"]  = state.stm32_online;
-  doc["sequence"]         = state.sequence;
-
-  // Only include timestamps when NTP is synced.
-  // If NTP fails, nowISO() returns "1970-01-01" which would make the device
-  // appear permanently offline. When omitted, Supabase uses server-side now().
-  String ts = nowISO();
-  if (!ts.startsWith("1970")) {
-    doc["last_seen"]        = ts;
-    doc["last_telemetry_at"]= ts;
-  }
+  doc["type"] = "telemetry";
+  doc["deviceId"] = DEVICE_ID;
+  
+  JsonObject tel = doc.createNestedObject("telemetry");
+  tel["waterLevel"] = state.water_level;
+  tel["voltage"] = (int)state.voltage;
+  tel["voltageState"] = state.voltage_state;
+  tel["pumpState"] = state.pump_state;
+  tel["mode"] = state.mode;
+  tel["dryRun"] = state.dry_run;
+  tel["fault"] = state.fault;
+  tel["sequence"] = state.sequence;
+  tel["firmwareVersion"] = FIRMWARE_VERSION;
+  tel["stm32Connected"] = state.stm32_online;
 
   String body;
   serializeJson(doc, body);
 
-  String url = String(SUPABASE_URL) + "/rest/v1/device_registry";
-  int code = supabasePost(url, body, true);  // true = upsert
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Authorization", String("Bearer ") + INGEST_TOKEN);
+  int code = http.POST(body);
+  http.end();
 
   if (code == 200 || code == 201 || code == 204) {
-    Serial.println(F("[Supabase] Telemetry pushed ✓"));
+    Serial.println(F("[Ingest] Telemetry pushed ✓"));
   } else {
-    Serial.printf("[Supabase] Telemetry failed: HTTP %d\n", code);
+    Serial.printf("[Ingest] Telemetry failed: HTTP %d\n", code);
   }
 }
 
@@ -261,32 +262,24 @@ void pushTelemetry() {
 // ─────────────────────────────────────────────────────────────
 void pushHeartbeat() {
   if (WiFi.status() != WL_CONNECTED) return;
+  String url = String(BACKEND_URL) + "/api/device/ingest";
+  
+  StaticJsonDocument<256> doc;
+  doc["type"] = "heartbeat";
+  doc["deviceId"] = DEVICE_ID;
+  doc["firmwareVersion"] = FIRMWARE_VERSION;
+  doc["stm32Connected"] = state.stm32_online;
 
-  String url  = String(SUPABASE_URL) + "/rest/v1/device_registry"
-                + "?device_id=eq." + DEVICE_ID;
-
-  // Only include timestamp if NTP is synced; otherwise let DB use now()
-  String ts = nowISO();
   String body;
-  if (!ts.startsWith("1970")) {
-    body = "{\"last_seen\":\"" + ts + "\""
-           + ",\"last_heartbeat_at\":\"" + ts + "\"}";
-  } else {
-    // NTP not yet synced — send empty PATCH so DB triggers its own now() default
-    // by touching the row. Use a sentinel value the DB will ignore.
-    body = "{\"sequence\":" + String(state.sequence) + "}";
-  }
+  serializeJson(doc, body);
 
   HTTPClient http;
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("apikey", SUPABASE_KEY);
-  http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-  http.addHeader("Prefer", "return=minimal");
-  int code = http.sendRequest("PATCH", body);
+  http.addHeader("Authorization", String("Bearer ") + INGEST_TOKEN);
+  int code = http.POST(body);
   http.end();
-
-  Serial.printf("[Supabase] Heartbeat: HTTP %d\n", code);
+  Serial.printf("[Ingest] Heartbeat: HTTP %d\n", code);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -294,18 +287,25 @@ void pushHeartbeat() {
 // ─────────────────────────────────────────────────────────────
 void pushEvent(String type, String message) {
   if (WiFi.status() != WL_CONNECTED) return;
-
+  String url = String(BACKEND_URL) + "/api/device/ingest";
+  
   StaticJsonDocument<256> doc;
-  doc["device_id"] = DEVICE_ID;
-  doc["type"]      = type;
-  doc["message"]   = message;
+  doc["type"] = "event";
+  doc["deviceId"] = DEVICE_ID;
+  JsonObject evt = doc.createNestedObject("event");
+  evt["type"] = type;
+  evt["message"] = message;
 
   String body;
   serializeJson(doc, body);
 
-  String url = String(SUPABASE_URL) + "/rest/v1/events";
-  int code = supabasePost(url, body, false);
-  Serial.printf("[Supabase] Event (%s): HTTP %d\n", type.c_str(), code);
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Authorization", String("Bearer ") + INGEST_TOKEN);
+  int code = http.POST(body);
+  http.end();
+  Serial.printf("[Ingest] Event (%s): HTTP %d\n", type.c_str(), code);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -313,19 +313,8 @@ void pushEvent(String type, String message) {
 // ─────────────────────────────────────────────────────────────
 void registerDevice() {
   if (WiFi.status() != WL_CONNECTED) return;
-
-  StaticJsonDocument<256> doc;
-  doc["device_id"]        = DEVICE_ID;
-  doc["firmware_version"] = FIRMWARE_VERSION;
-  doc["last_seen"]        = nowISO();
-  doc["registered_at"]    = nowISO();
-
-  String body;
-  serializeJson(doc, body);
-
-  String url = String(SUPABASE_URL) + "/rest/v1/device_registry";
-  int code = supabasePost(url, body, true);
-  Serial.printf("[Supabase] Device register: HTTP %d\n", code);
+  // The ingest API automatically handles device registration when a heartbeat is received.
+  pushHeartbeat();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -423,23 +412,24 @@ bool executeCommand(String cmdType) {
 // ─────────────────────────────────────────────────────────────
 void updateCommandStatus(String cmdId, String status) {
   if (cmdId.length() == 0) return;
+  String url = String(BACKEND_URL) + "/api/device/ingest";
+  
+  StaticJsonDocument<256> doc;
+  doc["type"] = "command_result";
+  doc["deviceId"] = DEVICE_ID;
+  doc["commandId"] = cmdId;
+  doc["status"] = status;
 
-  String url  = String(SUPABASE_URL)
-                + "/rest/v1/commands?id=eq." + cmdId;
-  String body = "{\"status\":\"" + status + "\""
-                + ",\"updated_at\":\"" + nowISO() + "\"}";
+  String body;
+  serializeJson(doc, body);
 
   HTTPClient http;
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("apikey", SUPABASE_KEY);
-  http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-  http.addHeader("Prefer", "return=minimal");
-  int code = http.sendRequest("PATCH", body);
+  http.addHeader("Authorization", String("Bearer ") + INGEST_TOKEN);
+  int code = http.POST(body);
   http.end();
-
-  Serial.printf("[Supabase] Command %s → %s: HTTP %d\n",
-    cmdId.c_str(), status.c_str(), code);
+  Serial.printf("[Ingest] Command %s -> %s: HTTP %d\n", cmdId.c_str(), status.c_str(), code);
 }
 
 // ─────────────────────────────────────────────────────────────
