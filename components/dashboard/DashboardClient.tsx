@@ -194,7 +194,7 @@ export function DashboardClient({ deviceId }: { deviceId: string }) {
         sensorFault={state.fault === "WATER_LEVEL_SENSOR_FAULT"}
         deviceId={state.deviceId}
         lastSeen={state.lastSeen}
-        isSimulated={isSimulatorMode()}
+        isSimulated={false}
       />
 
       <MetricsStrip state={state} connection={connection} stale={isStale} />

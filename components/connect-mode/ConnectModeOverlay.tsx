@@ -48,7 +48,7 @@ interface ConnectModeOverlayProps {
  *   "discovery"  → fetching available ESP32 devices from backend
  *   "hardware"   → device selected, showing connection status + connect button
  */
-type OverlayView = "simulator" | "discovery" | "hardware";
+type OverlayView = "discovery" | "hardware";
 
 // ─── Component ───────────────────────────────────────────────────────────
 
@@ -361,13 +361,6 @@ export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
             <div className="flex gap-2 border-t border-slate-700 px-5 py-4 mt-4">
               <button
                 type="button"
-                onClick={switchToSimulator}
-                className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
-              >
-                ← Simulator
-              </button>
-              <button
-                type="button"
                 onClick={() => void discoverDevices()}
                 disabled={discoveryLoading}
                 className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-400 hover:bg-slate-800 disabled:opacity-50"
@@ -502,13 +495,6 @@ export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
                 className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-300 hover:bg-slate-800"
               >
                 ← Devices
-              </button>
-              <button
-                type="button"
-                onClick={switchToSimulator}
-                className="rounded-lg border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-400 hover:bg-slate-800"
-              >
-                Simulator
               </button>
 
               <div className="ml-auto flex gap-2">

@@ -9,7 +9,7 @@ vi.mock("@/lib/device/service", () => ({
   getActiveProvider: vi.fn(() => ({
     getConnectionStatus: () => ({
       phase: "DISCONNECTED",
-      dataSource: "simulator",
+      dataSource: "hardware",
       esp32: { connected: false },
       stm32: { connected: false },
       telemetry: { receiving: false, messageCount: 0 },
@@ -18,26 +18,9 @@ vi.mock("@/lib/device/service", () => ({
     onConnectionChange: vi.fn(() => () => {}),
     dispose: vi.fn(),
   })),
-  getDataSource: vi.fn(() => "simulator"),
+  getDataSource: vi.fn(() => "none"),
   setActiveProvider: vi.fn(),
-}));
-
-// Mock SimulatorProvider
-vi.mock("@/lib/device/providers/simulator-provider", () => ({
-  SimulatorProvider: vi.fn().mockImplementation(() => ({
-    source: "simulator",
-    initialize: vi.fn().mockResolvedValue(undefined),
-    dispose: vi.fn(),
-    getConnectionPhase: () => "CONNECTED",
-    getConnectionStatus: () => ({
-      phase: "CONNECTED",
-      dataSource: "simulator",
-      esp32: { connected: true },
-      stm32: { connected: true },
-      telemetry: { receiving: true, messageCount: 0 },
-    }),
-    onConnectionChange: vi.fn(() => () => {}),
-  })),
+  clearActiveProvider: vi.fn(),
 }));
 
 // Mock HardwareProvider
@@ -57,7 +40,6 @@ vi.mock("@/lib/device/providers/hardware-provider", () => ({
       telemetry: { receiving: true, messageCount: 5 },
     }),
     onConnectionChange: vi.fn((_cb: (phase: string) => void) => {
-      // Immediately call with CONNECTED after connect
       return () => {};
     }),
   })),
@@ -86,7 +68,7 @@ describe("ConnectModeOverlay", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(getDataSource).mockReturnValue("simulator");
+    vi.mocked(getDataSource).mockReturnValue("none");
 
     // Mock global fetch for device discovery
     global.fetch = vi.fn().mockResolvedValue({
@@ -112,16 +94,15 @@ describe("ConnectModeOverlay", () => {
     vi.restoreAllMocks();
   });
 
-  // ── Simulator view ────────────────────────────────────────────────────────
+  // ── Discovery view ────────────────────────────────────────────────────────
 
-  it("shows simulator view by default when data source is simulator", () => {
+  it("shows discovery view by default", () => {
     render(<ConnectModeOverlay onClose={onClose} />);
-    expect(screen.getByText(/Virtual Simulator Active/i)).toBeDefined();
+    expect(screen.getByText(/Available AquaGuard Devices/i)).toBeDefined();
   });
 
   it("does NOT show a WebSocket URL input field", () => {
     render(<ConnectModeOverlay onClose={onClose} />);
-    // The old design had a URL input — must not be present anymore
     const inputs = document.querySelectorAll("input[type='text']");
     expect(inputs.length).toBe(0);
   });
@@ -139,34 +120,14 @@ describe("ConnectModeOverlay", () => {
     expect(document.body.textContent?.includes("ws://192.168")).toBe(false);
   });
 
-  it("shows 'Connect Real Hardware' button in simulator view", () => {
-    render(<ConnectModeOverlay onClose={onClose} />);
-    expect(screen.getByText(/Connect Real Hardware/i)).toBeDefined();
-  });
-
   it("closes on Escape key", () => {
     render(<ConnectModeOverlay onClose={onClose} />);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  // ── Discovery view ────────────────────────────────────────────────────────
-
-  it("navigates to discovery view when 'Connect Real Hardware' is clicked", async () => {
+  it("fetches devices from /api/device/devices on mount", async () => {
     render(<ConnectModeOverlay onClose={onClose} />);
-
-    const btn = screen.getByText(/Connect Real Hardware/i);
-    await act(async () => { fireEvent.click(btn); });
-
-    // Should show discovery heading
-    expect(screen.getByText(/Available AquaGuard Devices/i)).toBeDefined();
-  });
-
-  it("fetches devices from /api/device/devices on discovery view", async () => {
-    render(<ConnectModeOverlay onClose={onClose} />);
-
-    const btn = screen.getByText(/Connect Real Hardware/i);
-    await act(async () => { fireEvent.click(btn); });
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith("/api/device/devices");
@@ -176,10 +137,6 @@ describe("ConnectModeOverlay", () => {
   it("shows discovered device in the list", async () => {
     render(<ConnectModeOverlay onClose={onClose} />);
 
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
-
     await waitFor(() => {
       expect(screen.getByText(/AQ-ESP32-/i)).toBeDefined();
     });
@@ -187,10 +144,6 @@ describe("ConnectModeOverlay", () => {
 
   it("shows ONLINE status badge for online device", async () => {
     render(<ConnectModeOverlay onClose={onClose} />);
-
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
 
     await waitFor(() => {
       expect(screen.getByText(/ONLINE/i)).toBeDefined();
@@ -200,17 +153,12 @@ describe("ConnectModeOverlay", () => {
   it("shows STM32 Connected for device with stm32Connected=true", async () => {
     render(<ConnectModeOverlay onClose={onClose} />);
 
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
-
     await waitFor(() => {
-      // The device list shows STM32 status
       expect(document.body.textContent?.includes("Connected")).toBe(true);
     });
   });
 
-  it("shows 'No devices registered' when backend returns empty list", async () => {
+  it("shows empty state when backend returns empty list", async () => {
     vi.mocked(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       json: () => Promise.resolve({ devices: [] }),
@@ -218,12 +166,8 @@ describe("ConnectModeOverlay", () => {
 
     render(<ConnectModeOverlay onClose={onClose} />);
 
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
-
     await waitFor(() => {
-      expect(screen.getByText(/No devices registered/i)).toBeDefined();
+      expect(screen.getByText(/No AquaGuard ESP32 devices have sent a heartbeat/i)).toBeDefined();
     });
   });
 
@@ -231,10 +175,6 @@ describe("ConnectModeOverlay", () => {
     vi.mocked(global.fetch as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("Network error"));
 
     render(<ConnectModeOverlay onClose={onClose} />);
-
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
 
     await waitFor(() => {
       expect(screen.getByText(/Network error/i)).toBeDefined();
@@ -245,10 +185,6 @@ describe("ConnectModeOverlay", () => {
 
   it("shows hardware status cards after selecting a device", async () => {
     render(<ConnectModeOverlay onClose={onClose} />);
-
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
 
     // Wait for device list to load
     await waitFor(() => {
@@ -269,10 +205,6 @@ describe("ConnectModeOverlay", () => {
   it("shows Connect button when device is selected but not connected", async () => {
     render(<ConnectModeOverlay onClose={onClose} />);
 
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
-
     await waitFor(() => { screen.getByText(/AQ-ESP32-/i); });
     const deviceItem = screen.getByRole("option");
     await act(async () => { fireEvent.click(deviceItem); });
@@ -281,16 +213,9 @@ describe("ConnectModeOverlay", () => {
   });
 
   it("instantiates CloudTransport (not WebSocketTransport) when connecting", async () => {
-    // This test verifies that clicking Connect uses CloudTransport
-    // (backend-powered cloud path), which is the Vercel-compatible transport.
-    // WebSocketTransport (direct browser→ESP32) must never be used.
     const { CloudTransport } = await import("@/lib/device/transports/cloud-transport");
 
     render(<ConnectModeOverlay onClose={onClose} />);
-
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
 
     await waitFor(() => { screen.getByText(/AQ-ESP32-/i); });
     const deviceItem = screen.getByRole("option");
@@ -300,19 +225,12 @@ describe("ConnectModeOverlay", () => {
     await act(async () => { fireEvent.click(connectBtn); });
 
     await waitFor(() => {
-      // CloudTransport (backend-powered, not direct WS) was instantiated
       expect(vi.mocked(CloudTransport)).toHaveBeenCalled();
     });
   });
 
-  // ── Simulator preservation ────────────────────────────────────────────────
-
   it("can navigate back to devices list from hardware view", async () => {
     render(<ConnectModeOverlay onClose={onClose} />);
-
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
 
     // Navigate to hardware view
     await waitFor(() => { screen.getByText(/AQ-ESP32-/i); });
@@ -333,10 +251,6 @@ describe("ConnectModeOverlay", () => {
 
   it("shows safety reminder in hardware view", async () => {
     render(<ConnectModeOverlay onClose={onClose} />);
-
-    await act(async () => {
-      fireEvent.click(screen.getByText(/Connect Real Hardware/i));
-    });
 
     await waitFor(() => { screen.getByText(/AQ-ESP32-/i); });
     await act(async () => {
