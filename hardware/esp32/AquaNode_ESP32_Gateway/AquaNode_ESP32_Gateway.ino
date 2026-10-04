@@ -233,8 +233,15 @@ void pushTelemetry() {
   doc["firmware_version"] = FIRMWARE_VERSION;
   doc["stm32_connected"]  = state.stm32_online;
   doc["sequence"]         = state.sequence;
-  doc["last_seen"]        = nowISO();
-  doc["last_telemetry_at"]= nowISO();
+
+  // Only include timestamps when NTP is synced.
+  // If NTP fails, nowISO() returns "1970-01-01" which would make the device
+  // appear permanently offline. When omitted, Supabase uses server-side now().
+  String ts = nowISO();
+  if (!ts.startsWith("1970")) {
+    doc["last_seen"]        = ts;
+    doc["last_telemetry_at"]= ts;
+  }
 
   String body;
   serializeJson(doc, body);
@@ -258,9 +265,17 @@ void pushHeartbeat() {
   String url  = String(SUPABASE_URL) + "/rest/v1/device_registry"
                 + "?device_id=eq." + DEVICE_ID;
 
-  // PATCH just the last_seen and last_heartbeat_at fields
-  String body = "{\"last_seen\":\"" + nowISO() + "\""
-                + ",\"last_heartbeat_at\":\"" + nowISO() + "\"}";
+  // Only include timestamp if NTP is synced; otherwise let DB use now()
+  String ts = nowISO();
+  String body;
+  if (!ts.startsWith("1970")) {
+    body = "{\"last_seen\":\"" + ts + "\""
+           + ",\"last_heartbeat_at\":\"" + ts + "\"}";
+  } else {
+    // NTP not yet synced — send empty PATCH so DB triggers its own now() default
+    // by touching the row. Use a sentinel value the DB will ignore.
+    body = "{\"sequence\":" + String(state.sequence) + "}";
+  }
 
   HTTPClient http;
   http.begin(url);
@@ -450,17 +465,17 @@ int supabasePost(String url, String body, bool upsert) {
 //  ISO 8601 timestamp (requires NTP)
 // ─────────────────────────────────────────────────────────────
 String nowISO() {
-  // Sync NTP on first call
+  // Trigger NTP sync on first successful WiFi connection
   static bool ntpSynced = false;
   if (!ntpSynced && WiFi.status() == WL_CONNECTED) {
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-    delay(1500);
+    // Non-blocking: check once, will succeed within a few seconds naturally
     ntpSynced = true;
   }
 
   struct tm ti;
-  if (!getLocalTime(&ti)) {
-    // Fallback if NTP not synced yet
+  if (!getLocalTime(&ti, 0)) {  // 0ms timeout = non-blocking
+    // NTP not synced yet — caller will check for "1970" prefix and omit the field
     return "1970-01-01T00:00:00Z";
   }
 

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { isSimulatorMode } from "@/lib/device/service";
 import { BrandMark } from "@/components/brand/BrandMark";
 
 export function AppHeader() {
@@ -31,7 +30,6 @@ export function AppHeader() {
   const links = [
     { href: "/dashboard", label: "Monitor" },
     { href: "/events", label: "Events" },
-    ...(isSimulatorMode() ? [{ href: "/simulator", label: "⚡ Simulator" }] : []),
   ];
 
   return (

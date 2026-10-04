@@ -25,10 +25,10 @@ import {
   getActiveProvider,
   getDataSource,
   setActiveProvider,
+  clearActiveProvider,
 } from "@/lib/device/service";
 import { HardwareProvider } from "@/lib/device/providers/hardware-provider";
 import { CloudTransport } from "@/lib/device/transports/cloud-transport";
-import { SimulatorProvider } from "@/lib/device/providers/simulator-provider";
 import type {
   ConnectionPhase,
   DiscoveredDevice,
@@ -53,9 +53,9 @@ type OverlayView = "simulator" | "discovery" | "hardware";
 // ─── Component ───────────────────────────────────────────────────────────
 
 export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
-  // Initial view from actual active data source
+  // Always start in discovery mode — no simulator
   const [view, setView] = useState<OverlayView>(() =>
-    getDataSource() === "hardware" ? "hardware" : "simulator",
+    getDataSource() === "hardware" ? "hardware" : "discovery",
   );
 
   // Device discovery state
@@ -67,7 +67,7 @@ export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
   // Hardware connection state
   const [status, setStatus] = useState<HardwareConnectionStatus>(() =>
     getDataSource() === "hardware"
-      ? getActiveProvider().getConnectionStatus()
+      ? (getActiveProvider()?.getConnectionStatus?.() ?? defaultConnectionStatus("hardware"))
       : defaultConnectionStatus("hardware"),
   );
   const [connecting, setConnecting] = useState(false);
@@ -91,6 +91,14 @@ export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
     }, 1000);
     return () => clearInterval(interval);
   }, [view]);
+
+  // Auto-start discovery when overlay opens (no simulator view)
+  useEffect(() => {
+    if (view === "discovery") {
+      void discoverDevices();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // only on mount
 
   // Close on Escape
   useEffect(() => {
@@ -161,8 +169,8 @@ export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
     setError(null);
   }, []);
 
-  /** Switch back to simulator mode (active provider is swapped) */
-  const switchToSimulator = useCallback(() => {
+  /** Disconnect from hardware and clear the active provider */
+  const disconnectAndClose = useCallback(() => {
     if (connectionUnsubRef.current) {
       connectionUnsubRef.current();
       connectionUnsubRef.current = null;
@@ -171,12 +179,8 @@ export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
       hwProviderRef.current.dispose();
       hwProviderRef.current = null;
     }
-
-    const simProvider = new SimulatorProvider();
-    void simProvider.initialize();
-    setActiveProvider(simProvider);
-
-    setView("simulator");
+    clearActiveProvider();
+    setView("discovery");
     setSelectedDeviceId(null);
     setDevices([]);
     setStatus(defaultConnectionStatus("hardware"));
@@ -288,7 +292,11 @@ export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
               AquaGuard Hardware Connection
             </h2>
             <p className="mt-0.5 text-xs text-slate-500">
-              Developer interface · Not visible to users
+              {view === "hardware" && status.phase === "CONNECTED"
+                ? "Connected to hardware"
+                : view === "discovery"
+                ? "Select a device to connect"
+                : "Connecting…"}
             </p>
           </div>
           <button
@@ -303,41 +311,7 @@ export function ConnectModeOverlay({ onClose }: ConnectModeOverlayProps) {
           </button>
         </div>
 
-        {/* ── Simulator View ─────────────────────────────────────────── */}
-        {view === "simulator" && (
-          <>
-            <div className="px-5 py-6">
-              <div className="flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/10">
-                  <span className="h-3 w-3 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.4)]" />
-                </span>
-                <div>
-                  <p className="text-sm font-semibold text-slate-100">
-                    Virtual Simulator Active
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    Running with simulated device data (demo mode)
-                  </p>
-                </div>
-              </div>
-              <p className="mt-4 text-xs leading-relaxed text-slate-500">
-                The dashboard is using the built-in simulator engine. All sensor
-                readings, pump state, and events are virtually generated.
-                Switch to hardware mode to connect to a real AquaGuard ESP32 device.
-              </p>
-            </div>
-            <div className="flex border-t border-slate-700 px-5 py-4">
-              <button
-                type="button"
-                onClick={showDiscovery}
-                className="ml-auto rounded-lg bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-500"
-              >
-                Connect Real Hardware →
-              </button>
-            </div>
-          </>
-        )}
-
+        {/* No simulator view — panel goes straight to discovery */}
         {/* ── Discovery View ─────────────────────────────────────────── */}
         {view === "discovery" && (
           <>

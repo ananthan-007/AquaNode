@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Command, CommandStatus, DeviceState } from "@/types/device";
-import { getDeviceState, createCommand, getCommand, subscribeToDeviceState, isSimulatorMode } from "@/lib/device/service";
+import { getDeviceState, createCommand, getCommand, subscribeToDeviceState, isProviderActive } from "@/lib/device/service";
 import { getDisplayConnection } from "@/lib/device/staleness";
 import { TankLevel } from "./TankLevel";
 import { FaultBanner } from "./FaultBanner";
@@ -12,6 +12,7 @@ import { CommandLifecycle } from "./CommandLifecycle";
 import { ModeToggle } from "./ModeToggle";
 import { QuickInsights } from "./QuickInsights";
 import { MetricsStrip } from "./MetricsStrip";
+import { DeviceNotConnected } from "@/components/device/DeviceNotConnected";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -22,24 +23,19 @@ export function DashboardClient({ deviceId }: { deviceId: string }) {
   const [activeCommand, setActiveCommand] = useState<Command | null>(null);
   const [observedStatuses, setObservedStatuses] = useState<CommandStatus[]>([]);
   const observedCommandId = useRef<string | null>(null);
-  // Track simulator mode reactively so switching providers updates the banner
-  const [simMode, setSimMode] = useState(isSimulatorMode);
+  // Track whether any hardware provider is active (re-evaluated on every render).
+  // This flips from false → true the moment Connect Mode sets the provider.
+  const [providerActive, setProviderActive] = useState(isProviderActive);
 
   const refresh = useCallback(async () => {
     try {
       const s = await getDeviceState(deviceId);
       setState(s);
-      setSimMode(isSimulatorMode());
       setLoadState("ready");
     } catch (e) {
-      // Hardware provider throws "Waiting for first telemetry" when it hasn't
-      // received any packets yet (e.g., right after page navigation/remount).
-      // Don't treat this as a hard error — stay in loading state and wait for
-      // the subscription to deliver the first state update.
       const msg = e instanceof Error ? e.message : String(e);
-      const isWaiting = msg.includes("Waiting for") || msg.includes("not connected");
-      if (isWaiting) {
-        // Stay in loading — subscription will call setState when data arrives
+      // "Hardware not connected" is not a crash — show not-connected UI
+      if (msg.includes("not connected") || msg.includes("Waiting for")) {
         setLoadState("loading");
       } else {
         setErrorMsg(msg);
@@ -49,15 +45,21 @@ export function DashboardClient({ deviceId }: { deviceId: string }) {
   }, [deviceId]);
 
   useEffect(() => {
-    setSimMode(isSimulatorMode());
+    // Re-check provider status whenever the component mounts or deviceId changes.
+    // This ensures navigating back to this page re-evaluates the connection.
+    setProviderActive(isProviderActive());
+    setLoadState("loading");
+    setState(null);
+
+    if (!isProviderActive()) return; // Nothing to subscribe to yet
+
     refresh();
 
-    // Subscribe to reactive state updates from the device service.
-    // This works for both simulator (internal listener) and hardware
-    // (CloudTransport polling + Supabase Realtime push).
+    // Subscribe to real-time hardware state via Supabase Realtime WebSocket
+    // + CloudTransport polling. Fires every time Postgres row changes.
     const unsubscribe = subscribeToDeviceState(deviceId, (newState) => {
       setState(newState);
-      setSimMode(isSimulatorMode());
+      setProviderActive(true);
       setLoadState("ready");
     });
 
@@ -138,10 +140,17 @@ export function DashboardClient({ deviceId }: { deviceId: string }) {
     }
   }
 
+  // ── Render guards ──────────────────────────────────────────────────
+
+  // No provider set yet — hardware not connected via Connect Mode
+  if (!providerActive) {
+    return <DeviceNotConnected />;
+  }
+
   if (loadState === "loading") {
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-6 text-sm text-slate-500">
-        Loading device status…
+        Connecting to hardware…
       </div>
     );
   }
@@ -160,20 +169,6 @@ export function DashboardClient({ deviceId }: { deviceId: string }) {
 
   return (
     <div className="space-y-4">
-      {/* SIMULATION indicator — must be unmistakable */}
-      {simMode && (
-        <div className="flex items-center gap-2 rounded-xl border-2 border-dashed border-violet-300 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700">
-          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-200 text-xs">⚡</span>
-          SIMULATION — This is simulated device data, not a physical device.
-          <a
-            href="/simulator"
-            className="ml-auto rounded-md bg-violet-200 px-2.5 py-1 text-xs font-semibold text-violet-800 hover:bg-violet-300"
-          >
-            Control Panel
-          </a>
-        </div>
-      )}
-
       <ConnectionStatus
         connection={connection}
         lastSeenIso={state.lastSeen}
