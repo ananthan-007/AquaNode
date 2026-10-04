@@ -50,14 +50,14 @@ export function DeviceNotConnected({ hint }: DeviceNotConnectedProps) {
         <p className="mb-2 text-xs font-bold uppercase tracking-widest text-slate-400">
           How to Connect
         </p>
-        <ol className="space-y-1.5 text-xs text-slate-600">
+        <ol className="mb-4 space-y-1.5 text-xs text-slate-600">
           <li className="flex gap-2">
             <span className="font-bold text-slate-800">1.</span>
             Power on your ESP32 and ensure it is connected to Wi-Fi.
           </li>
           <li className="flex gap-2">
             <span className="font-bold text-slate-800">2.</span>
-            Press <kbd className="rounded border border-slate-300 bg-white px-1 py-0.5 font-mono text-[10px]">Space</kbd>{" "}
+            Click the Connect button below, or press <kbd className="rounded border border-slate-300 bg-white px-1 py-0.5 font-mono text-[10px]">Space</kbd>{" "}
             five times rapidly to open the hardware panel.
           </li>
           <li className="flex gap-2">
@@ -65,6 +65,13 @@ export function DeviceNotConnected({ hint }: DeviceNotConnectedProps) {
             Select your device and click <strong>Connect</strong>.
           </li>
         </ol>
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent("open-connect-mode"))}
+          className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700"
+        >
+          Connect Device
+        </button>
       </div>
     </div>
   );

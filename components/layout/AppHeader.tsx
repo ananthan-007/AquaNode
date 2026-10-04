@@ -65,6 +65,13 @@ export function AppHeader() {
               </p>
               <button
                 type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("open-connect-mode"))}
+                className="rounded-md bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700 hover:bg-blue-100"
+              >
+                Hardware Panel
+              </button>
+              <button
+                type="button"
                 onClick={handleLogout}
                 disabled={signingOut}
                 className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 disabled:opacity-50"
