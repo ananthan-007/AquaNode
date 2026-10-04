@@ -22,26 +22,42 @@ export function DashboardClient({ deviceId }: { deviceId: string }) {
   const [activeCommand, setActiveCommand] = useState<Command | null>(null);
   const [observedStatuses, setObservedStatuses] = useState<CommandStatus[]>([]);
   const observedCommandId = useRef<string | null>(null);
+  // Track simulator mode reactively so switching providers updates the banner
+  const [simMode, setSimMode] = useState(isSimulatorMode);
 
   const refresh = useCallback(async () => {
     try {
       const s = await getDeviceState(deviceId);
       setState(s);
+      setSimMode(isSimulatorMode());
       setLoadState("ready");
     } catch (e) {
-      setErrorMsg(e instanceof Error ? e.message : "Unknown error");
-      setLoadState("error");
+      // Hardware provider throws "Waiting for first telemetry" when it hasn't
+      // received any packets yet (e.g., right after page navigation/remount).
+      // Don't treat this as a hard error — stay in loading state and wait for
+      // the subscription to deliver the first state update.
+      const msg = e instanceof Error ? e.message : String(e);
+      const isWaiting = msg.includes("Waiting for") || msg.includes("not connected");
+      if (isWaiting) {
+        // Stay in loading — subscription will call setState when data arrives
+        setLoadState("loading");
+      } else {
+        setErrorMsg(msg);
+        setLoadState("error");
+      }
     }
   }, [deviceId]);
 
   useEffect(() => {
+    setSimMode(isSimulatorMode());
     refresh();
 
     // Subscribe to reactive state updates from the device service.
-    // This works for both simulator (internal listener) and supabase
-    // (postgres_changes realtime) — the dashboard doesn't need to know which.
+    // This works for both simulator (internal listener) and hardware
+    // (CloudTransport polling + Supabase Realtime push).
     const unsubscribe = subscribeToDeviceState(deviceId, (newState) => {
       setState(newState);
+      setSimMode(isSimulatorMode());
       setLoadState("ready");
     });
 
@@ -145,7 +161,7 @@ export function DashboardClient({ deviceId }: { deviceId: string }) {
   return (
     <div className="space-y-4">
       {/* SIMULATION indicator — must be unmistakable */}
-      {isSimulatorMode() && (
+      {simMode && (
         <div className="flex items-center gap-2 rounded-xl border-2 border-dashed border-violet-300 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700">
           <span className="flex h-6 w-6 items-center justify-center rounded-full bg-violet-200 text-xs">⚡</span>
           SIMULATION — This is simulated device data, not a physical device.
