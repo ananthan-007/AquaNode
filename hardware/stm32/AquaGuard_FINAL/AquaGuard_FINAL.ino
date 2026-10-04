@@ -71,11 +71,21 @@ enum PumpMode { MODE_AUTO, MODE_MANUAL };
 PumpMode currentMode = MODE_AUTO;
 
 // ─── State ────────────────────────────────────────────────────
-bool   pumpState    = false;
-bool   sensorFault  = false;
-bool   dryRun       = false;
-String faultMsg     = "";
-long   sequence     = 0;
+bool   pumpState      = false;
+bool   sensorFault    = false;
+bool   dryRun         = false;
+String faultMsg       = "";
+long   sequence       = 0;
+
+// Dry-run lockout: after a dry-run event, pump stays OFF for at least
+// DRY_RUN_LOCKOUT_MS and until water level recovers above DRY_RUN_CLEAR_PCT.
+const unsigned long DRY_RUN_LOCKOUT_MS  = 30000UL;  // 30s minimum lockout
+const int           DRY_RUN_CLEAR_PCT   = 10;        // must reach 10% to re-enable
+const unsigned long DRY_RUN_CONFIRM_MS  = 4000UL;   // must persist 4s before triggering
+bool          dryRunLocked    = false;
+unsigned long dryRunLockedAt  = 0;
+bool          dryRunPending   = false;   // debounce: condition seen but not yet confirmed
+unsigned long dryRunPendingAt = 0;       // when the condition was first seen
 
 unsigned long lastTelemetry = 0;
 String        pendingCmd    = "";
@@ -116,6 +126,7 @@ void loop() {
   if (distCm < 0) {
     sensorFault = true;
     faultMsg    = "SENSOR_TIMEOUT";
+    // Don't update dryRun on bad reads — keep last known value
   } else {
     float d = distCm;
     if (d < TANK_FULL_CM)  d = TANK_FULL_CM;
@@ -123,9 +134,36 @@ void loop() {
     levelPct = (int)((TANK_EMPTY_CM - d) /
                (TANK_EMPTY_CM - TANK_FULL_CM) * 100.0);
 
-    // Dry run detection: pump is ON but tank is empty
-    dryRun = (pumpState && levelPct <= 2);
-    if (dryRun) faultMsg = "DRY_RUN";
+    // Dry run: pump is ON but tank reads nearly empty — need 4s confirmation
+    bool conditionMet = (pumpState && levelPct <= 2);
+    if (conditionMet && !dryRunPending && !dryRun && !dryRunLocked) {
+      // Condition just appeared — start debounce timer
+      dryRunPending   = true;
+      dryRunPendingAt = millis();
+    } else if (!conditionMet) {
+      // Condition cleared before confirmation
+      dryRunPending = false;
+    }
+    // Confirm dry run only after 4 continuous seconds
+    bool newDryRun = dryRun || (dryRunPending && (millis() - dryRunPendingAt >= DRY_RUN_CONFIRM_MS));
+    if (newDryRun && !dryRun) {
+      // Dry run confirmed — start lockout
+      dryRunLocked    = true;
+      dryRunLockedAt  = millis();
+      dryRunPending   = false;
+    }
+    dryRun = newDryRun;
+    if (dryRun)       faultMsg = "DRY_RUN";
+    if (dryRunPending) faultMsg = "DRY_RUN_WARN"; // warning before full lockout
+
+    // Clear lockout only when: period elapsed AND level recovered
+    if (dryRunLocked &&
+        (millis() - dryRunLockedAt >= DRY_RUN_LOCKOUT_MS) &&
+        levelPct >= DRY_RUN_CLEAR_PCT) {
+      dryRunLocked  = false;
+      dryRun        = false;
+      dryRunPending = false;
+    }
   }
 
   // 3. Voltage
@@ -145,17 +183,17 @@ void loop() {
   if (currentMode == MODE_AUTO && !sensorFault) {
     if (!voltOk) {
       if (pumpState) { pumpState = false; }
-    } else if (dryRun) {
-      // Force pump OFF on dry run
+    } else if (dryRun || dryRunLocked) {
+      // Force pump OFF — dry run active or still in lockout period
       pumpState = false;
     } else {
       if      (distCm >= PUMP_ON_CM  && !pumpState) pumpState = true;
       else if (distCm <= PUMP_OFF_CM &&  pumpState) pumpState = false;
     }
   }
-  // In MANUAL mode, pumpState is set directly by commands from ESP32
-  // and voltage/dry run protection still applies:
-  if (!voltOk || dryRun) pumpState = false;
+  // Safety override applies in ALL modes (MANUAL too):
+  // dryRunLocked ensures pump can't re-enable immediately after dry run clears
+  if (!voltOk || dryRun || dryRunLocked) pumpState = false;
 
   digitalWrite(RELAY_PIN, pumpState ? PUMP_ON : PUMP_OFF);
   sequence++;
@@ -222,6 +260,14 @@ void processCommand(String cmd) {
     currentMode = MODE_AUTO;
   } else if (cmd == "MODE:MANUAL") {
     currentMode = MODE_MANUAL;
+  } else if (cmd == "FAULT:RESET") {
+    // Clear dry-run lockout so pump can restart
+    dryRunLocked  = false;
+    dryRun        = false;
+    dryRunPending = false;
+    faultMsg      = "";
+    // In MANUAL mode, keep pump OFF until explicitly turned on
+    if (currentMode == MODE_MANUAL) pumpState = false;
   }
   updateLCDMode();
 }

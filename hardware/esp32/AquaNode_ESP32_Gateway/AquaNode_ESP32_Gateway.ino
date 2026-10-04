@@ -321,10 +321,11 @@ void registerDevice() {
 void pollCommands() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  // Fetch PENDING commands for this device, oldest first
+  // Fetch PENDING commands for this device by registry_device_id (text),
+  // not device_id (UUID FK) which the hardware can never satisfy directly.
   String url = String(SUPABASE_URL)
     + "/rest/v1/commands"
-    + "?device_id=eq." + DEVICE_ID
+    + "?registry_device_id=eq." + DEVICE_ID
     + "&status=eq.PENDING"
     + "&order=created_at.asc"
     + "&limit=1";
@@ -389,6 +390,12 @@ bool executeCommand(String cmdType) {
     STM32_SERIAL.println("MODE:MANUAL");
     Serial.println(F("[STM32] → MODE:MANUAL"));
     state.mode = "MANUAL";
+    return true;
+  } else if (cmdType == "FAULT_RESET") {
+    STM32_SERIAL.println("FAULT:RESET");
+    Serial.println(F("[STM32] → FAULT:RESET"));
+    state.fault = "";
+    pushEvent("FAULT_RESET", "Fault cleared by web app");
     return true;
   }
 

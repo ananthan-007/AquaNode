@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createClient as createServiceClient } from "@supabase/supabase-js";
+import { getSupabasePublicEnv } from "@/lib/supabase/env";
 
 const VALID_TYPES = [
   "PUMP_ON",
@@ -29,9 +31,28 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid command payload" }, { status: 400 });
   }
 
-  const { data, error } = await supabase
+  // deviceId may be a UUID (public.devices FK) or a text registry ID (AQ-ESP32-...).
+  // registry_device_id lets the ESP32 poll PENDING commands by its own text device ID.
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    body.deviceId,
+  );
+
+  // Service role bypasses RLS — auth is validated manually above.
+  const { url, anonKey } = getSupabasePublicEnv();
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? anonKey;
+  const admin = createServiceClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  const { data, error } = await admin
     .from("commands")
-    .insert({ device_id: body.deviceId, type: body.type, requested_by: user.id, status: "PENDING" })
+    .insert({
+      type: body.type,
+      requested_by: user.id,
+      status: "PENDING",
+      device_id: isUuid ? body.deviceId : null,
+      registry_device_id: isUuid ? null : body.deviceId,
+    })
     .select("id, status")
     .single();
 
